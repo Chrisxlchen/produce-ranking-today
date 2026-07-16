@@ -39,17 +39,35 @@ user gives an as-of date (then pass it as `--date` and `--as-of`).
    pool list.
 
 3. **Run shadow research.** Fan the unique tickers across parallel subagents
-   (~5 each). Each subagent runs `stock-shadow-research` per its `SKILL.md`, and
-   for each ticker writes `report.md` + `<TICKER>.json` into **every pool dir
-   that queued it**: `rank-history/<date>/<pool>/shadow_research_top15/<TICKER>.{md,json}`
-   (uppercase ticker). A `.md` Write-hook may block — write `.md` via Bash.
-   **Done when** every queued (pool, ticker) pair has both files.
+   (~5 each). Each subagent runs `stock-shadow-research` per its `SKILL.md`; its
+   default output shape `rank-history/<date>/<TICKER>/{report.md,<TICKER>.json}`
+   is fine (Step 4 fans it out). A `.md` Write-hook may block — write `.md` via
+   Bash. **Done when** every unique ticker has both default files.
 
-4. **Verify + summarize.** Confirm both files exist and each JSON parses for
+4. **Consolidate into pool dirs.** Run
+   `python <skill>/scripts/consolidate_shadow.py --date <date> <pool> [<pool> ...]`.
+   It copies each ticker's report into every pool that queued it as
+   `<pool>/shadow_research_top15/<TICKER>.{md,json}` (renaming `report.md` ->
+   `<TICKER>.md`) and removes the loose `<TICKER>/` dirs. Idempotent. **Done
+   when** it reports `missing sources: 0` and the pair count equals the expected
+   (sum of per-pool Top15). Any `MISSING` names need shadow research re-run.
+
+5. **Verify + summarize.** Confirm both files exist and each JSON parses for
    every queued (pool, ticker) pair. Then write `rank-history/<date>/SUMMARY.md`:
    a per-pool Top15 verdict table (`new_entry_bias` per ticker) plus a conviction
    list of tickers queued by 2+ pools. **Done when** the verified pair count
    equals the expected count and `SUMMARY.md` is written.
+
+6. **Promote (opt-in — only when the user asks).** Run
+   `python <skill>/scripts/promote_top5.py --date <date> <pool> [<pool> ...]`.
+   Per pool it overlay-transforms the shadow JSON, finalizes the five research
+   pools at `top_n=5`, and writes each to **flat `pools/`** as
+   `<prefix>_top5_<suffix>.json` (prefix = pool name's first token: `ndx`,
+   `production`, `selective`, `universal`) with the internal `pool_name`
+   rewritten to match, plus a dated archive copy in
+   `rank-history/<date>/promoted_pools/`. **Done when** every
+   `pools/<prefix>_top5_*.json` loads via `load_pool` with a unique name.
+   This writes production pool files — get explicit user confirmation first.
 
 ## Reference
 
@@ -69,3 +87,9 @@ user gives an as-of date (then pass it as `--date` and `--as-of`).
 - **Deduping matters:** the same leader appears across pools (semis, security).
   Run each unique ticker's research once, then write copies into each pool dir —
   don't re-research per pool.
+- **Raw-topN research gate (promote):** finalize hard-requires research for the
+  raw-momentum top-N (quant_fit `rank_today <= top_n`). The stage2 Top15 queue
+  can omit a raw-topN name the AI gate didn't admit (e.g. a red-flagged leader),
+  so at `top_n=5` promote may fail with "Missing required Filtered Quant Top3
+  research: <TICKER>". Fix: run `stock-shadow-research` for that ticker into the
+  pool's `shadow_research_top15/` (raw compact JSON), then re-run promote.
